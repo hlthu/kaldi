@@ -91,7 +91,6 @@ if $use_ihm_ali; then
   tree_dir=exp/$mic/chain${nnet3_affix}/tree_bi${tree_affix}_ihmdata
   lat_dir=exp/$mic/chain${nnet3_affix}/${gmm}_${train_set}_sp_comb_lats_ihmdata
   dir=exp/$mic/chain${nnet3_affix}/tdnn_opgru${tgru_affix}_sp_ihmali
-  dir=exp/$mic/chain${nnet3_affix}/tdnn_opgru${tgru_affix}_sp_bi_ihmali
   # note: the distinction between when we use the 'ihmdata' suffix versus
   # 'ihmali' is pretty arbitrary.
 else

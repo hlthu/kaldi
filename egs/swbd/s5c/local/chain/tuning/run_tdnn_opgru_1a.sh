@@ -23,6 +23,8 @@
 # Final train prob (xent)        -0.918    -0.889
 # Final valid prob (xent)       -1.0309   -0.9837
 
+
+
 set -e
 
 # configs for 'chain'
