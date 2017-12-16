@@ -528,6 +528,7 @@ class XconfigNormPgruLayer(XconfigLayerBase):
         # y_t_tmp = h_t * W^y
         # s_t = renorm ( y_t_tmp (0:rec_proj_dim-1) )
         # y_t = batchnorm ( y_t_tmp )
+
         
         configs = []
         configs.append("# Update gate control : W_z* matrics")
@@ -554,6 +555,7 @@ class XconfigNormPgruLayer(XconfigLayerBase):
 
         configs.append("# Defining the components for other cell computations")
         configs.append("component name={0}.h1 type=ElementwiseProductComponent input-dim={1} output-dim={2}".format(name, 2 * rec_proj_dim, rec_proj_dim))
+
         configs.append("component name={0}.y1 type=ElementwiseProductComponent input-dim={1} output-dim={2}".format(name, 2 * cell_dim, cell_dim))
         configs.append("component name={0}.y2 type=ElementwiseProductComponent input-dim={1} output-dim={2}".format(name, 2 * cell_dim, cell_dim))
         configs.append("component name={0}.y type=NoOpComponent dim={1}".format(name, cell_dim))
@@ -620,6 +622,7 @@ class XconfigNormPgruLayer(XconfigLayerBase):
 #                                   in addition to recurrent-projection-dim, e.g. cell-dim/4]
 #   delay=-1                 [Delay in the recurrent connections of the GRU ]
 #   clipping-threshold=30    [nnet3 GRU use a gradient clipping component at the recurrent connections.
+
 #                             This is the threshold used to decide if clipping has to be activated ]
 #   zeroing-interval=20      [interval at which we (possibly) zero out the recurrent derivatives.]
 #   zeroing-threshold=15     [We only zero out the derivs every zeroing-interval, if derivs exceed this value.]
@@ -661,7 +664,7 @@ class XconfigOpgruLayer(XconfigLayerBase):
             if self.config[key] <= 0:
                 raise RuntimeError("{0} has invalid value {1}.".format(
                     key, self.config[key]))
-
+                
         if self.config['delay'] == 0:
             raise RuntimeError("delay cannot be zero")
 
