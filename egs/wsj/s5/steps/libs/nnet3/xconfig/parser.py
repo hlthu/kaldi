@@ -65,8 +65,6 @@ config_to_layer = {
         'opgru-layer' : xlayers.XconfigOpgruLayer,
         'norm-pgru-layer' : xlayers.XconfigNormPgruLayer,
         'norm-opgru-layer' : xlayers.XconfigNormOpgruLayer,
-        'fast-gru-layer': xlayers.XconfigFastGruLayer,
-        'fast-pgru-layer': xlayers.XconfigFastPgruLayer,
         'renorm-component': xlayers.XconfigRenormComponent
 }
 
