@@ -1,27 +1,21 @@
 #!/bin/bash
+
 # Copyright 2017 University of Chinese Academy of Sciences (UCAS) Gaofeng Cheng
 # Apache 2.0
 
-# This is based on TDNN_LSTM_1b, but using the NormOPGRU to replace the LSTMP,
-# and adding chunk-{left,right}-context-initial=0
-# Different from the vanilla OPGRU, Norm-OPGRU adds batchnorm in its output (forward direction)
-# and renorm in its recurrence. Experiments show that the TDNN-NormOPGRU could achieve similar
-# results than TDNN-LSTMP and BLSTMP in both large or small data sets (80 ~ 2300 Hrs).
+# run_bpgru_1a is the same as run_blstm_6k, but using projected-gru layer
 
-# ./local/chain/compare_wer_general.sh --looped tdnn_lstm_1e_sp tdnn_opgru_1a_sp
-# System                tdnn_lstm_1e_sp tdnn_opgru_1a_sp
-# WER on train_dev(tg)      12.81     12.39
-#           [looped:]       12.93     12.32
-# WER on train_dev(fg)      11.92     11.39
-#           [looped:]       12.07     11.35
-# WER on eval2000(tg)        15.6      15.1
-#           [looped:]        16.0      15.1
-# WER on eval2000(fg)        14.1      13.6
-#           [looped:]        14.5      13.5
-# Final train prob         -0.065    -0.066
-# Final valid prob         -0.087    -0.085
-# Final train prob (xent)        -0.918    -0.889
-# Final valid prob (xent)       -1.0309   -0.9837
+# ./local/chain/compare_wer_general.sh blstm_6k_sp bpgru_1a_sp
+# System                blstm_6k_sp bpgru_1a_sp
+# WER on train_dev(tg)      13.40     13.32
+# WER on train_dev(fg)      12.29     12.20
+# WER on eval2000(tg)        15.6      15.2
+# WER on eval2000(fg)        14.2      13.9
+# Final train prob         -0.056    -0.062
+# Final valid prob         -0.078    -0.081
+# Final train prob (xent)        -0.765    -0.806
+# Final valid prob (xent)       -0.8794   -0.9127
+
 
 set -e
 
@@ -30,23 +24,22 @@ stage=12
 train_stage=-10
 get_egs_stage=-10
 speed_perturb=true
-dir=exp/chain/tdnn_opgru_1a # Note: _sp will get added to this if $speed_perturb == true.
+dir=exp/chain/bprgu_1a  # Note: _sp will get added to this if $speed_perturb == true.
 decode_iter=
 decode_dir_affix=
 
 # training options
-leftmost_questions_truncate=-1
 chunk_width=150
 chunk_left_context=40
-chunk_right_context=0
+chunk_right_context=40
 xent_regularize=0.025
 self_repair_scale=0.00001
-label_delay=5
+label_delay=0
+
 # decode options
 extra_left_context=50
-extra_right_context=0
+extra_right_context=50
 frames_per_chunk=
-test_online_decoding=
 
 remove_egs=false
 common_egs_dir=
@@ -77,6 +70,8 @@ if [ "$speed_perturb" == "true" ]; then
 fi
 
 dir=$dir${affix:+_$affix}
+if [ $label_delay -gt 0 ]; then dir=${dir}_ld$label_delay; fi
+dir=${dir}$suffix
 train_set=train_nodup$suffix
 ali_dir=exp/tri4_ali_nodup$suffix
 treedir=exp/chain/tri5_7d_tree$suffix
@@ -116,7 +111,6 @@ fi
 if [ $stage -le 11 ]; then
   # Build a tree using our new topology.
   steps/nnet3/chain/build_tree.sh --frame-subsampling-factor 3 \
-      --leftmost-questions-truncate $leftmost_questions_truncate \
       --context-opts "--context-width=2 --central-position=1" \
       --cmd "$train_cmd" 7000 data/$train_set $lang $ali_dir $treedir
 fi
@@ -125,8 +119,10 @@ if [ $stage -le 12 ]; then
   echo "$0: creating neural net configs using the xconfig parser";
 
   num_targets=$(tree-info $treedir/tree |grep num-pdfs|awk '{print $2}')
+  [ -z $num_targets ] && { echo "$0: error getting num-targets"; exit 1; }
   learning_rate_factor=$(echo "print 0.5/$xent_regularize" | python)
-  lstm_opts="dropout-per-frame=true dropout-proportion=0.0"
+
+  pgru_opts="vars_path=$dir/configs"
 
   mkdir -p $dir/configs
   cat <<EOF > $dir/configs/network.xconfig
@@ -139,21 +135,19 @@ if [ $stage -le 12 ]; then
   fixed-affine-layer name=lda input=Append(-2,-1,0,1,2,ReplaceIndex(ivector, t, 0)) affine-transform-file=$dir/configs/lda.mat
 
   # the first splicing is moved before the lda layer, so no splicing here
-  relu-batchnorm-layer name=tdnn1 dim=1024
-  relu-batchnorm-layer name=tdnn2 input=Append(-1,0,1) dim=1024
-  relu-batchnorm-layer name=tdnn3 input=Append(-1,0,1) dim=1024
 
-  # check steps/libs/nnet3/xconfig/gru.py for the other options and defaults
-  norm-opgru-layer name=opgru1 cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=-3 $lstm_opts
-  relu-batchnorm-layer name=tdnn4 input=Append(-3,0,3) dim=1024
-  relu-batchnorm-layer name=tdnn5 input=Append(-3,0,3) dim=1024
-  norm-opgru-layer name=opgru2 cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=-3 $lstm_opts
-  relu-batchnorm-layer name=tdnn6 input=Append(-3,0,3) dim=1024
-  relu-batchnorm-layer name=tdnn7 input=Append(-3,0,3) dim=1024
-  norm-opgru-layer name=opgru3 cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=-3 $lstm_opts
+  # check steps/libs/nnet3/xconfig/lstm.py for the other options and defaults
+  pgru-layer name=bpgru1-forward input=lda cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=-3 $pgru_opts
+  pgru-layer name=bpgru1-backward input=lda cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=3 $pgru_opts
+
+  pgru-layer name=bpgru2-forward input=Append(bpgru1-forward, bpgru1-backward) cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=-3 $pgru_opts
+  pgru-layer name=bpgru2-backward input=Append(bpgru1-forward, bpgru1-backward) cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=3 $pgru_opts
+
+  pgru-layer name=bpgru3-forward input=Append(bpgru2-forward, bpgru2-backward) cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=-3 $pgru_opts
+  pgru-layer name=bpgru3-backward input=Append(bpgru2-forward, bpgru2-backward) cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=3 $pgru_opts
 
   ## adding the layers for chain branch
-  output-layer name=output input=opgru3 output-delay=$label_delay include-log-softmax=false dim=$num_targets max-change=1.5
+  output-layer name=output input=Append(bpgru3-forward, bpgru3-backward) output-delay=$label_delay include-log-softmax=false dim=$num_targets max-change=1.5
 
   # adding the layers for xent branch
   # This block prints the configs for a separate output that will be
@@ -164,7 +158,7 @@ if [ $stage -le 12 ]; then
   # final-layer learns at a rate independent of the regularization
   # constant; and the 0.5 was tuned so as to make the relative progress
   # similar in the xent and regular final layers.
-  output-layer name=output-xent input=opgru3 output-delay=$label_delay dim=$num_targets learning-rate-factor=$learning_rate_factor max-change=1.5
+  output-layer name=output-xent input=Append(bpgru3-forward, bpgru3-backward) output-delay=$label_delay dim=$num_targets learning-rate-factor=$learning_rate_factor max-change=1.5
 
 EOF
   steps/nnet3/xconfig_to_configs.py --xconfig-file $dir/configs/network.xconfig --config-dir $dir/configs/
@@ -201,9 +195,6 @@ if [ $stage -le 13 ]; then
     --egs.chunk-width $chunk_width \
     --egs.chunk-left-context $chunk_left_context \
     --egs.chunk-right-context $chunk_right_context \
-    --trainer.dropout-schedule $dropout_schedule \
-    --egs.chunk-left-context-initial 0 \
-    --egs.chunk-right-context-final 0 \
     --egs.dir "$common_egs_dir" \
     --cleanup.remove-egs $remove_egs \
     --feat-dir data/${train_set}_hires \
@@ -231,7 +222,7 @@ if [ $stage -le 15 ]; then
   fi
   for decode_set in train_dev eval2000; do
       (
-       steps/nnet3/decode.sh --acwt 1.0 --post-decode-acwt 10.0 \
+      steps/nnet3/decode.sh --acwt 1.0 --post-decode-acwt 10.0 \
           --nj 50 --cmd "$decode_cmd" $iter_opts \
           --extra-left-context $extra_left_context  \
           --extra-right-context $extra_right_context  \
@@ -247,60 +238,5 @@ if [ $stage -le 15 ]; then
       ) &
   done
 fi
-
-if $test_online_decoding && [ $stage -le 16 ]; then
-  # note: if the features change (e.g. you add pitch features), you will have to
-  # change the options of the following command line.
-  steps/online/nnet3/prepare_online_decoding.sh \
-       --mfcc-config conf/mfcc_hires.conf \
-       $lang exp/nnet3/extractor $dir ${dir}_online
-
-  rm $dir/.error 2>/dev/null || true
-  for decode_set in train_dev eval2000; do
-    (
-      # note: we just give it "$decode_set" as it only uses the wav.scp, the
-      # feature type does not matter.
-      steps/online/nnet3/decode.sh --nj 50 --cmd "$decode_cmd" $iter_opts \
-          --acwt 1.0 --post-decode-acwt 10.0 \
-         $graph_dir data/${decode_set}_hires \
-         ${dir}_online/decode_${decode_set}${decode_iter:+_$decode_iter}_sw1_tg || exit 1;
-      if $has_fisher; then
-          steps/lmrescore_const_arpa.sh --cmd "$decode_cmd" \
-            data/lang_sw1_{tg,fsh_fg} data/${decode_set}_hires \
-            ${dir}_online/decode_${decode_set}${decode_iter:+_$decode_iter}_sw1_{tg,fsh_fg} || exit 1;
-      fi
-    ) || touch $dir/.error &
-  done
-  wait
-  if [ -f $dir/.error ]; then
-    echo "$0: something went wrong in online decoding"
-    exit 1
-  fi
-fi
-
-if [ $stage -le 17 ]; then
-  rm $dir/.error 2>/dev/null || true
-  for decode_set in train_dev eval2000; do
-    (
-      steps/nnet3/decode_looped.sh \
-         --acwt 1.0 --post-decode-acwt 10.0 \
-         --nj 50 --cmd "$decode_cmd" $iter_opts \
-         --online-ivector-dir exp/nnet3/ivectors_${decode_set} \
-         $graph_dir data/${decode_set}_hires \
-         $dir/decode_${decode_set}${decode_iter:+_$decode_iter}_sw1_tg_looped || exit 1;
-      if $has_fisher; then
-          steps/lmrescore_const_arpa.sh --cmd "$decode_cmd" \
-            data/lang_sw1_{tg,fsh_fg} data/${decode_set}_hires \
-            $dir/decode_${decode_set}${decode_iter:+_$decode_iter}_sw1_{tg,fsh_fg}_looped || exit 1;
-      fi
-      ) &
-  done
-  wait
-  if [ -f $dir/.error ]; then
-    echo "$0: something went wrong in looped decoding"
-    exit 1
-  fi
-fi
-
 wait;
 exit 0;
