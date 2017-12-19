@@ -1077,7 +1077,7 @@ class XconfigFastOpgruLayer(XconfigLayerBase):
                                                              # recurrent-projection-dim
                         'clipping-threshold' : 30.0,
                         'delay' : -1,
-                        'ng-affine-options' : ' max-change=0.75 ',
+                        'ng-affine-options' : ' max-change=0.10 ',
                         'self-repair-scale-nonlinearity' : 0.00001,
                         'zeroing-interval' : 20,
                         'zeroing-threshold' : 15.0,
