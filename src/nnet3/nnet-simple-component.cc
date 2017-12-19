@@ -6046,7 +6046,7 @@ void OpgruNonlinearityComponent::Add(BaseFloat alpha, const Component &other_in)
   const OpgruNonlinearityComponent *other =
       dynamic_cast<const OpgruNonlinearityComponent*>(&other_in);
   KALDI_ASSERT(other != NULL);
-  w_hc_.AddMat(alpha, other->w_hc_);
+  w_hc_.AddVec(alpha, other->w_hc_);
   value_sum_.AddVec(alpha, other->value_sum_);
   deriv_sum_.AddVec(alpha, other->deriv_sum_);
   self_repair_total_ += alpha * other->self_repair_total_;
@@ -6057,39 +6057,37 @@ void OpgruNonlinearityComponent::Check() const {
   KALDI_ASSERT(cell_dim_ > 0 &&
                self_repair_threshold_ >= 0.0 &&
                self_repair_scale_ >= 0.0 );
-  KALDI_ASSERT(w_hc_.NumRows() == cell_dim_ &&
-               w_hc_.NumCols() == cell_dim_);
+  KALDI_ASSERT(w_hc_.Dim() == cell_dim_);
   KALDI_ASSERT(value_sum_.Dim() == cell_dim_ &&
                deriv_sum_.Dim() == cell_dim_);
 }
 
 void OpgruNonlinearityComponent::PerturbParams(BaseFloat stddev) {
-  CuMatrix<BaseFloat> temp_params(w_hc_.NumRows(), w_hc_.NumCols());
+  CuVector<BaseFloat> temp_params(w_hc_.Dim());
   temp_params.SetRandn();
-  w_hc_.AddMat(stddev, temp_params);
+  w_hc_.AddVec(stddev, temp_params);
 }
 
 BaseFloat OpgruNonlinearityComponent::DotProduct(const UpdatableComponent &other_in) const {
   const OpgruNonlinearityComponent *other =
       dynamic_cast<const OpgruNonlinearityComponent*>(&other_in);
   KALDI_ASSERT(other != NULL);
-  return TraceMatMat(w_hc_, other->w_hc_, kTrans);
+  return VecVec(w_hc_, other->w_hc_);
 }
 
 int32 OpgruNonlinearityComponent::NumParameters() const {
-  return w_hc_.NumRows() * w_hc_.NumCols();
+  return w_hc_.Dim();
 }
 
 void OpgruNonlinearityComponent::Vectorize(VectorBase<BaseFloat> *params) const {
   KALDI_ASSERT(params->Dim() == NumParameters());
-  params->CopyRowsFromMat(w_hc_);
+  params->CopyFromVec(w_hc_);
 }
 
 void OpgruNonlinearityComponent::UnVectorize(const VectorBase<BaseFloat> &params)  {
   KALDI_ASSERT(params.Dim() == NumParameters());
-  w_hc_.CopyRowsFromVec(params);
+  w_hc_.CopyFromVec(params);
 }
-
 
 void OpgruNonlinearityComponent::FreezeNaturalGradient(bool freeze) {
   preconditioner_in_.Freeze(freeze);
@@ -6122,10 +6120,11 @@ void* OpgruNonlinearityComponent::Propagate(
       c_t(*out, 0, num_rows, cell_dim_, cell_dim_),
       m_t(*out, 0, num_rows, 2 * cell_dim_, cell_dim_);
 
-  h_t.CopyFromMat(hpart_t);
-  // now, h_t = hpart_t, which is defined as
-  // hpart_t = W_{hx} x_t + b_h
-  h_t.AddMatMat(1.0, c_t1, kNoTrans, w_hc_, kTrans, 1.0);
+  h_t.CopyFromMat(c_t1);
+  // now, h_t = c_{t-1}
+  h_t.MulColsVec(w_hc_);
+  // now h_t = w_{hc} c_{t-1}
+  h_t.AddMat(1.0, hpart_t);
   // now h_t = hpart_t + w_{hc} c_{t-1}
   h_t.Tanh(h_t);
   // now h_t = \tanh( hpart_t + w_{hc} c_{t-1} )
@@ -6240,7 +6239,10 @@ void OpgruNonlinearityComponent::Backprop(const std::string &debug_info,
     }
     if (in_deriv) {
       hpart_t_deriv.AddMat(1.0, h_t_deriv);
-      c_t1_deriv.AddMatMat(1.0, h_t_deriv, kNoTrans, w_hc_, kNoTrans, 0.0);
+      CuMatrix<BaseFloat> tmp_deriv(num_rows, cell_dim_, kUndefined);
+      tmp_deriv.CopyFromMat(h_t_deriv);
+      tmp_deriv.MulColsVec(w_hc_);
+      c_t1_deriv.AddMat(1.0, tmp_deriv);
     }
   }
 }
@@ -6302,10 +6304,8 @@ void OpgruNonlinearityComponent::UpdateParameters(
     const CuMatrixBase<BaseFloat> &c_t1,
     const CuMatrixBase<BaseFloat> &h_t_deriv) {
   if (is_gradient_) {
-    // 'simple' update, no natural gradient.  Compare
-    // with AffineComponent::UpdateSimple().
-    w_hc_.AddMatMat(learning_rate_, h_t_deriv, kTrans,
-                   c_t1, kNoTrans, 1.0);
+    // 'simple' update
+    w_hc_.AddDiagMatMat(learning_rate_, h_t_deriv, kTrans, c_t1, kNoTrans, 1.0);
   } else {
     // the natural-gradient update.
     CuMatrix<BaseFloat> in_value_temp(c_t1),
@@ -6320,8 +6320,7 @@ void OpgruNonlinearityComponent::UpdateParameters(
                                                &out_scale);
 
     BaseFloat local_lrate = learning_rate_ * in_scale * out_scale;
-    w_hc_.AddMatMat(local_lrate, out_deriv_temp, kTrans,
-                   in_value_temp, kNoTrans, 1.0);
+    w_hc_.AddDiagMatMat(local_lrate, out_deriv_temp, kTrans, in_value_temp, kNoTrans, 1.0);
   }
 }
 
@@ -6365,7 +6364,7 @@ void OpgruNonlinearityComponent::InitFromConfig(ConfigLine *cfl) {
   cfl->GetValue("rank-out", &rank_out);
   cfl->GetValue("update-period", &update_period);
 
-  w_hc_.Resize(cell_dim_, cell_dim_);
+  w_hc_.Resize(cell_dim_);
   w_hc_.SetRandn();
   w_hc_.Scale(param_stddev);
 

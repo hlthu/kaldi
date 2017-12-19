@@ -2444,7 +2444,7 @@ class OpgruNonlinearityComponent: public UpdatableComponent {
 
   // The dimension of the parameter matrix is (1 x C);
   // it contains the diagonal parameter matrix w_{hc}. in (1)
-  CuMatrix<BaseFloat> w_hc_;
+  CuVector<BaseFloat> w_hc_;
 
   // Of dimension C, this is comparable to the value_sum_ vector in
   // class NonlinearComponent.  It stores the sum of the tanh nonlinearity in (1).
