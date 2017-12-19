@@ -7,6 +7,7 @@
 //           2014-2015  Guoguo Chen
 //                2015  Daniel Galvez
 //                2015  Tom Ko
+//                2017  Lu Huang (Tsinghua University)
 
 // See ../../COPYING for clarification regarding multiple authors
 //
@@ -2273,6 +2274,218 @@ class LstmNonlinearityComponent: public UpdatableComponent {
 };
 
 
+/*
+  OpgruNonlinearityComponent is a component that implements part of a
+  Output-gate Projected Gated Recurrent Unit (OPGRU), which is proposed 
+  by Gaofeng Cheng. And this should be more efficient in time and
+  memory than stitching it together using more basic components.
+  This combines together the tanh's, plus some diagonal terms, into a single block.
+  Some of the codes are from GruNonlinearityComponent write by Dan
+  https://github.com/kaldi-asr/kaldi/pull/1762  
+
+  Let C be the cell dim,
+  The formulation of OPGRU is as follows:
+  z_t = \sigmoid ( W_{zx} x_t + W_{zs} s_{t-1} + b_z)   // update gate with dim C
+  o_t = \sigmoid ( W_{ox} x_t + W_{os} s_{t-1} + b_o)   // output gate with dim C
+  h_t = \tanh ( W_{hx} x_t + w_{hc} c_{t-1} + b_h)      // w_{hc} is a diagonal matrix, with dim C
+  c_t = (1 - z_t) \dot h_t + z_t \dot c_{t-1}           // cell
+  m_t = c_t \dot o_t                                    // output of the cell
+  y_t = W_{ym} m_t                                      // projection layer, with dim = 
+                                                        // recurrent_dim + non_recurrent_dim
+  s_t = y_t[0:rec_proj_dim-1]                           // dim(s_t) = recurrent_dim.
+
+  Outside the component, we will first compute z_t, o_t, and also hpart_t:
+     hpart_t = W_{hx} x_t + b_h
+  
+  And then this component implements the function:
+     (z_t, o_t, hpart_t, c_{t-1}) --> (h_t, c_t, m_t)
+  The input and output dim is:
+     (C, C, C, C) --> (C, C, C)
+  with the equations:
+     h_t = \tanh( hpart_t + w_{hc} c_{t-1} )            (1)
+     c_t = (1 - z_t) \dot h_t + z_t \dot c_{t-1}        (2)
+     m_t = c_t \dot o_t                                 (3)
+  
+  Then outside the component, we continue the followings:
+     y_t = W_{ym} m_t 
+     s_t = y_t[0:rec_proj_dim-1]
+
+  Notice that 'W_hc' is the only parameter that lives inside the component.
+  You might also notice that the output 'h_t' is never actually used
+  in any other part of the GRU, so the question arises: why is it
+  necessary to have it be an output of the component?  This has to do with
+  saving computation: because h_t is an output, and we'll be defining
+  the kBackpropNeedsOutput flag, it is available in the backprop phase
+  and this helps us avoid some computation (otherwise we'd have to do
+  a redundant multiplication by W_hc in the backprop phase that we already
+  did in the forward phase).  We could have used the 'memo' mechanism to
+  do this, but this is undesirable because the use of a memo disables
+  'update consolidation' in the backprop so we'd lose a little speed there.
+  
+  
+  The main configuration values that are accepted:
+         cell-dim         e.g. cell-dim=1024, Cell dimension.
+         param-stddev     Standard deviation for random initialization of
+                          the diagonal matrix w_{hc}.  Defaults to 1.0 / sqrt(C)
+                          where C is the cell-dim.
+         self-repair-threshold   Equivalent to the self-repair-lower-threshold
+                          in a TanhComponent; applies to the tanh nonlinearity.
+                          default=0.2, you probably won't want to change this.
+         self-repair-scale Equivalent to the self-repair-scale in a
+                          TanhComponent; applies to the tanh nonlinearity.
+                          default=1.0e-05, which you probably won't want to
+                          change unless dealing with an objective function that
+                          has smaller or larger dynamic range than normal, in
+                          which case you might want to make it smaller or
+                          larger.
+  
+  Values inherited from UpdatableComponent
+  (see its declaration in nnet-component-itf.h for details):
+      learning-rate
+      learning-rate-factor
+      max-change
+  Natural-gradient related options are below; you won't normally have to
+  set these.
+      alpha                 Constant that determines how much we smooth the
+                            Fisher-matrix estimates with the unit matrix.
+                            Larger means more smoothing. default=4.0
+      rank-in               Rank used in low-rank-plus-unit estimate of Fisher
+                            matrix in the input space.  default=20.
+      rank-out              Rank used in low-rank-plus-unit estimate of Fisher
+                            matrix in the output-derivative space.  default=80.
+      update-period         Determines the period (in minibatches) with which
+                            we update the Fisher-matrix estimates;
+                            making this > 1 saves a little time in training.
+                            default=4.
+  
+*/
+class OpgruNonlinearityComponent: public UpdatableComponent {
+ public:
+
+  virtual int32 InputDim() const;
+  virtual int32 OutputDim() const;
+  virtual std::string Info() const;
+  virtual void InitFromConfig(ConfigLine *cfl);
+  OpgruNonlinearityComponent() { }
+  virtual std::string Type() const { return "OpgruNonlinearityComponent"; }
+  virtual int32 Properties() const {
+    return kSimpleComponent|kUpdatableComponent|kBackpropNeedsInput|\
+        kBackpropNeedsOutput|kBackpropAdds;
+  }
+
+  virtual void* Propagate(const ComponentPrecomputedIndexes *indexes,
+                         const CuMatrixBase<BaseFloat> &in,
+                         CuMatrixBase<BaseFloat> *out) const;
+  virtual void Backprop(const std::string &debug_info,
+                        const ComponentPrecomputedIndexes *indexes,
+                        const CuMatrixBase<BaseFloat> &in_value,
+                        const CuMatrixBase<BaseFloat> &out_value,
+                        const CuMatrixBase<BaseFloat> &out_deriv,
+                        void *memo,
+                        Component *to_update_in,
+                        CuMatrixBase<BaseFloat> *in_deriv) const;
+  
+  virtual void Read(std::istream &is, bool binary);
+  virtual void Write(std::ostream &os, bool binary) const;
+
+  virtual Component* Copy() const { return new OpgruNonlinearityComponent(*this); }
+
+  // Some functions from base-class UpdatableComponent.
+  virtual void Scale(BaseFloat scale);
+  virtual void Add(BaseFloat alpha, const Component &other);
+  virtual void PerturbParams(BaseFloat stddev);
+  virtual BaseFloat DotProduct(const UpdatableComponent &other) const;
+  virtual int32 NumParameters() const;
+  virtual void Vectorize(VectorBase<BaseFloat> *params) const;
+  virtual void UnVectorize(const VectorBase<BaseFloat> &params);
+  virtual void ZeroStats();
+  virtual void FreezeNaturalGradient(bool freeze);
+
+  // Some functions that are specific to this class:
+  explicit OpgruNonlinearityComponent(
+      const OpgruNonlinearityComponent &other);
+  
+ 
+ private:
+  void Check() const;  // checks dimensions, etc.
+  
+   /**
+     This function stores value and derivative stats for the tanh
+     nonlinearity that is a part of this component, and if needed
+     adds the small 'self-repair' term to 'h_t_deriv'.
+      @param [in] h_t The output of the tanh expression from the
+                      forward pass.
+      @param [in,out] h_t_deriv  To here will be added the small
+                      self-repair term (this is a small value
+                      that we use to push oversaturated neurons
+                      back to the center).
+     This function has side effects on the class instance, specifically the
+     members value_sum_, deriv_sum, self_repair_total_, and count_.
+   */
+  void TanhStatsAndSelfRepair(const CuMatrixBase<BaseFloat> &h_t,
+                              CuMatrixBase<BaseFloat> *h_t_deriv);
+
+  /*  This function is responsible for updating the w_hc_ matrix
+      (taking into account the learning rate).
+        @param [in] c1_t  The value of c_{t-1}
+        @param [in] h_t_deriv  The derivative of the objective
+                        function w.r.t. the argument of the tanh
+                        function, i.e. w.r.t. the expression
+                        "hpart_t + W_hc * c1_t".
+                        This function is concerned with the second
+                        term as it affects the derivative w.r.t. W_hc.
+   */
+  void UpdateParameters(const CuMatrixBase<BaseFloat> &c1_t,
+                        const CuMatrixBase<BaseFloat> &h_t_deriv);
+
+  
+  // Notation: C is cell-dim, which equals w_hc_.NumCols().
+  int cell_dim_;   // cell dimension, e.g. 1024.
+
+  // The dimension of the parameter matrix is (1 x C);
+  // it contains the diagonal parameter matrix w_{hc}. in (1)
+  CuMatrix<BaseFloat> w_hc_;
+
+  // Of dimension C, this is comparable to the value_sum_ vector in
+  // class NonlinearComponent.  It stores the sum of the tanh nonlinearity in (1).
+  // Normalize by dividing by count_.
+  CuVector<double> value_sum_;
+
+  // Of dimension C, this is comparable to the deriv_sum_ vector in
+  // class NonlinearComponent.  It stores the sum of the function-derivative of
+  // the tanh nonlinearity in (1).  Normalize by dividing by count_.
+  CuVector<double> deriv_sum_;
+  
+  // This is part of the stats (along with value_sum_, deriv_sum_, and count_);
+  // if you divide it by count_ it gives you the proportion of the time that an
+  // average dimension was subject to self-repair.
+  double self_repair_total_;
+  
+  // The total count (number of frames) corresponding to the stats in value_sum_,
+  // deriv_sum_, and self_repair_total_.
+  double count_;
+
+  // A configuration parameter, this determines how saturated the derivative
+  // has to be for a particular dimension, before we activate self-repair.
+  // Default value is 0.2, the same as for TanhComponent.
+  BaseFloat self_repair_threshold_;
+
+  // A configuration parameter, this determines the maximum absolute value of
+  // the extra term that we add to the input derivative of the tanh when doing
+  // self repair.  The default value is 1.0e-05.
+  BaseFloat self_repair_scale_;
+
+  // Preconditioner for the input space when updating w_hc_ 
+  // The preconditioner stores its own configuration values; we write and read
+  // these, but not the preconditioner object itself.
+  OnlineNaturalGradient preconditioner_in_;
+
+  // Preconditioner for the output space when updating w_hc_
+  OnlineNaturalGradient preconditioner_out_;
+
+  const OpgruNonlinearityComponent &operator
+      = (const OpgruNonlinearityComponent &other); // Disallow.
+};
 
 
 /*

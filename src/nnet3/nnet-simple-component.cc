@@ -3,6 +3,7 @@
 // Copyright      2015  Johns Hopkins University (author: Daniel Povey)
 //                2015  Guoguo Chen
 //                2015  Daniel Galvez
+//                2017  Lu Huang (Tsinghua University)
 
 // See ../../COPYING for clarification regarding multiple authors
 //
@@ -5878,6 +5879,509 @@ void LstmNonlinearityComponent::InitFromConfig(ConfigLine *cfl) {
     KALDI_ERR << "Invalid initializer for layer of type "
               << Type() << ": \"" << cfl->WholeLine() << "\"";
   }
+}
+
+
+int32 OpgruNonlinearityComponent::InputDim() const {
+  return 4 * cell_dim_;
+}
+
+int32 OpgruNonlinearityComponent::OutputDim() const {
+  return 3 * cell_dim_;
+}
+
+std::string OpgruNonlinearityComponent::Info() const {
+  std::ostringstream stream;
+  stream << UpdatableComponent::Info()
+         << ", cell-dim=" << cell_dim_;
+  PrintParameterStats(stream, "w_hc", w_hc_);
+  stream << ", self-repair-threshold=" << self_repair_threshold_
+         << ", self-repair-scale=" << self_repair_scale_;
+  if (count_ > 0) {  // c.f. NonlinearComponent::Info().
+    stream << ", count=" << std::setprecision(3) << count_
+           << std::setprecision(6);
+    stream << ", self-repaired-proportion="
+           << (self_repair_total_ / (count_ * cell_dim_));
+    Vector<double> value_avg_dbl(value_sum_);
+    Vector<BaseFloat> value_avg(value_avg_dbl);
+    value_avg.Scale(1.0 / count_);
+    stream << ", value-avg=" << SummarizeVector(value_avg);
+    Vector<double> deriv_avg_dbl(deriv_sum_);
+    Vector<BaseFloat> deriv_avg(deriv_avg_dbl);
+    deriv_avg.Scale(1.0 / count_);
+    stream << ", deriv-avg=" << SummarizeVector(deriv_avg);
+  }
+  // natural-gradient parameters.
+  stream << ", alpha=" << preconditioner_in_.GetAlpha()
+         << ", rank-in=" << preconditioner_in_.GetRank()
+         << ", rank-out=" << preconditioner_out_.GetRank()
+         << ", update-period="
+         << preconditioner_in_.GetUpdatePeriod();
+  return stream.str();
+}
+
+void OpgruNonlinearityComponent::Read(std::istream &is, bool binary) {
+  ReadUpdatableCommon(is, binary);  // Read opening tag and learning rate.
+  
+  ExpectToken(is, binary, "<CellDim>");
+  ReadBasicType(is, binary, &cell_dim_);
+  
+  ExpectToken(is, binary, "<w_hc>");
+  w_hc_.Read(is, binary);
+
+  ExpectToken(is, binary, "<ValueAvg>");
+  value_sum_.Read(is, binary);
+  
+  ExpectToken(is, binary, "<DerivAvg>");
+  deriv_sum_.Read(is, binary);
+
+  ExpectToken(is, binary, "<SelfRepairTotal>");
+  ReadBasicType(is, binary, &self_repair_total_);
+  
+  ExpectToken(is, binary, "<Count>");
+  ReadBasicType(is, binary, &count_);
+  
+  value_sum_.Scale(count_);  // we read in the averages, not the sums.
+  deriv_sum_.Scale(count_);
+  
+  ExpectToken(is, binary, "<SelfRepairThreshold>");
+  ReadBasicType(is, binary, &self_repair_threshold_);
+  
+  ExpectToken(is, binary, "<SelfRepairScale>");
+  ReadBasicType(is, binary, &self_repair_scale_);
+
+  BaseFloat alpha;
+  int32 rank_in, rank_out, update_period;
+  ExpectToken(is, binary, "<Alpha>");
+  ReadBasicType(is, binary, &alpha);
+  ExpectToken(is, binary, "<RankInOut>");
+  ReadBasicType(is, binary, &rank_in);
+  ReadBasicType(is, binary, &rank_out);
+  ExpectToken(is, binary, "<UpdatePeriod>");
+  ReadBasicType(is, binary, &update_period);
+  preconditioner_in_.SetRank(rank_in);
+  preconditioner_out_.SetRank(rank_out);
+  preconditioner_in_.SetAlpha(alpha);
+  preconditioner_out_.SetAlpha(alpha);
+  preconditioner_in_.SetUpdatePeriod(update_period);
+  preconditioner_out_.SetUpdatePeriod(update_period);
+
+  ExpectToken(is, binary, "</OpgruNonlinearityComponent>");
+}
+
+
+void OpgruNonlinearityComponent::Write(std::ostream &os, bool binary) const {
+  WriteUpdatableCommon(os, binary);  // Read opening tag and learning rate.
+  
+  WriteToken(os, binary, "<CellDim>");
+  WriteBasicType(os, binary, cell_dim_);
+  
+  WriteToken(os, binary, "<w_hc>");
+  w_hc_.Write(os, binary);
+
+  {
+    // Write the value and derivative stats in a count-normalized way, for
+    // greater readability in text form.
+    WriteToken(os, binary, "<ValueAvg>");
+    Vector<BaseFloat> temp(value_sum_);
+    if (count_ != 0.0) temp.Scale(1.0 / count_);
+    temp.Write(os, binary);
+    WriteToken(os, binary, "<DerivAvg>");
+    temp.CopyFromVec(deriv_sum_);
+    if (count_ != 0.0) temp.Scale(1.0 / count_);
+    temp.Write(os, binary);
+  }
+
+  WriteToken(os, binary, "<SelfRepairTotal>");
+  WriteBasicType(os, binary, self_repair_total_);
+
+  WriteToken(os, binary, "<Count>");
+  WriteBasicType(os, binary, count_);
+
+  WriteToken(os, binary, "<SelfRepairThreshold>");
+  WriteBasicType(os, binary, self_repair_threshold_);
+
+  WriteToken(os, binary, "<SelfRepairScale>");
+  WriteBasicType(os, binary, self_repair_scale_);
+
+  BaseFloat alpha = preconditioner_in_.GetAlpha();
+  int32 rank_in = preconditioner_in_.GetRank(),
+      rank_out = preconditioner_out_.GetRank(),
+      update_period = preconditioner_in_.GetUpdatePeriod();
+  WriteToken(os, binary, "<Alpha>");
+  WriteBasicType(os, binary, alpha);
+  WriteToken(os, binary, "<RankInOut>");
+  WriteBasicType(os, binary, rank_in);
+  WriteBasicType(os, binary, rank_out);
+  WriteToken(os, binary, "<UpdatePeriod>");
+  WriteBasicType(os, binary, update_period);
+  WriteToken(os, binary, "</OpgruNonlinearityComponent>");
+
+}
+
+void OpgruNonlinearityComponent::ZeroStats() {
+  value_sum_.SetZero();
+  deriv_sum_.SetZero();
+  count_ = 0.0;
+  self_repair_total_ = 0.0;
+}
+
+void OpgruNonlinearityComponent::Scale(BaseFloat scale) {
+  if (scale == 0.0) {
+    w_hc_.SetZero();
+    value_sum_.SetZero();
+    deriv_sum_.SetZero();
+    self_repair_total_ = 0.0;
+    count_ = 0.0;
+  } else {
+    w_hc_.Scale(scale);
+    value_sum_.Scale(scale);
+    deriv_sum_.Scale(scale);
+    self_repair_total_ *= scale;
+    count_ *= scale;
+  } 
+}
+
+void OpgruNonlinearityComponent::Add(BaseFloat alpha, const Component &other_in) {
+  const OpgruNonlinearityComponent *other =
+      dynamic_cast<const OpgruNonlinearityComponent*>(&other_in);
+  KALDI_ASSERT(other != NULL);
+  w_hc_.AddMat(alpha, other->w_hc_);
+  value_sum_.AddVec(alpha, other->value_sum_);
+  deriv_sum_.AddVec(alpha, other->deriv_sum_);
+  self_repair_total_ += alpha * other->self_repair_total_;
+  count_ += alpha * other->count_;
+}
+
+void OpgruNonlinearityComponent::Check() const {
+  KALDI_ASSERT(cell_dim_ > 0 &&
+               self_repair_threshold_ >= 0.0 &&
+               self_repair_scale_ >= 0.0 );
+  KALDI_ASSERT(w_hc_.NumRows() == cell_dim_ &&
+               w_hc_.NumCols() == cell_dim_);
+  KALDI_ASSERT(value_sum_.Dim() == cell_dim_ &&
+               deriv_sum_.Dim() == cell_dim_);
+}
+
+void OpgruNonlinearityComponent::PerturbParams(BaseFloat stddev) {
+  CuMatrix<BaseFloat> temp_params(w_hc_.NumRows(), w_hc_.NumCols());
+  temp_params.SetRandn();
+  w_hc_.AddMat(stddev, temp_params);
+}
+
+BaseFloat OpgruNonlinearityComponent::DotProduct(const UpdatableComponent &other_in) const {
+  const OpgruNonlinearityComponent *other =
+      dynamic_cast<const OpgruNonlinearityComponent*>(&other_in);
+  KALDI_ASSERT(other != NULL);
+  return TraceMatMat(w_hc_, other->w_hc_, kTrans);
+}
+
+int32 OpgruNonlinearityComponent::NumParameters() const {
+  return w_hc_.NumRows() * w_hc_.NumCols();
+}
+
+void OpgruNonlinearityComponent::Vectorize(VectorBase<BaseFloat> *params) const {
+  KALDI_ASSERT(params->Dim() == NumParameters());
+  params->CopyRowsFromMat(w_hc_);
+}
+
+void OpgruNonlinearityComponent::UnVectorize(const VectorBase<BaseFloat> &params)  {
+  KALDI_ASSERT(params.Dim() == NumParameters());
+  w_hc_.CopyRowsFromVec(params);
+}
+
+
+void OpgruNonlinearityComponent::FreezeNaturalGradient(bool freeze) {
+  preconditioner_in_.Freeze(freeze);
+  preconditioner_out_.Freeze(freeze);
+}
+
+
+void* OpgruNonlinearityComponent::Propagate(
+    const ComponentPrecomputedIndexes *indexes,
+    const CuMatrixBase<BaseFloat> &in,
+    CuMatrixBase<BaseFloat> *out) const {
+  KALDI_ASSERT(in.NumRows() == out->NumRows() &&
+               in.NumCols() == InputDim() &&
+               out->NumCols() == OutputDim());
+  int32 num_rows = in.NumRows();
+  // this component implements the function:
+  //    (z_t, o_t, hpart_t, c_{t-1}) --> (h_t, c_t, m_t)
+  // The input and output dim is:
+  //    (C, C, C, C) --> (C, C, C)
+  // with the equations:
+  //    h_t = \tanh( hpart_t + w_{hc} c_{t-1} )            (1)
+  //    c_t = (1 - z_t) \dot h_t + z_t \dot c_{t-1}        (2)
+  //    m_t = c_t \dot o_t                                 (3)
+  CuSubMatrix<BaseFloat> z_t(in, 0, num_rows, 0, cell_dim_),
+      o_t(in, 0, num_rows, cell_dim_, cell_dim_),
+      hpart_t(in, 0, num_rows, 2 * cell_dim_, cell_dim_),
+      c_t1(in, 0, num_rows, 3 * cell_dim_, cell_dim_);
+  
+  CuSubMatrix<BaseFloat> h_t(*out, 0, num_rows, 0, cell_dim_),
+      c_t(*out, 0, num_rows, cell_dim_, cell_dim_),
+      m_t(*out, 0, num_rows, 2 * cell_dim_, cell_dim_);
+
+  h_t.CopyFromMat(hpart_t);
+  // now, h_t = hpart_t, which is defined as
+  // hpart_t = W_{hx} x_t + b_h
+  h_t.AddMatMat(1.0, c_t1, kNoTrans, w_hc_, kTrans, 1.0);
+  // now h_t = hpart_t + w_{hc} c_{t-1}
+  h_t.Tanh(h_t);
+  // now h_t = \tanh( hpart_t + w_{hc} c_{t-1} )
+
+  c_t.CopyFromMat(h_t);
+  // now c_t = h_t
+  c_t.AddMatMatElements(-1.0, z_t, h_t, 1.0);
+  // now c_t = h_t + (-1) * z_t \dot h_t
+  // which is just c_t = (1 - z_t) \dot h_t 
+  c_t.AddMatMatElements(1.0, z_t, c_t1, 1.0);
+  // now c_t = (1 - z_t) \dot h_t + z_t \dot c_{t-1}
+
+  m_t.CopyFromMat(c_t);
+  // now m_t = c_t
+  m_t.MulElements(o_t);
+  // now m_t = c_t \dot o_t
+  return NULL;
+}
+
+void OpgruNonlinearityComponent::Backprop(const std::string &debug_info,
+                                          const ComponentPrecomputedIndexes *indexes,
+                                          const CuMatrixBase<BaseFloat> &in_value,
+                                          const CuMatrixBase<BaseFloat> &out_value,
+                                          const CuMatrixBase<BaseFloat> &out_deriv,
+                                          void *memo,
+                                          Component *to_update_in,
+                                          CuMatrixBase<BaseFloat> *in_deriv) const {
+  // check
+  KALDI_ASSERT(SameDim(out_value, out_deriv) &&
+               in_value.NumRows() == out_value.NumRows() &&
+               in_value.NumCols() == InputDim() &&
+               out_value.NumCols() == OutputDim() &&
+               (in_deriv == NULL || SameDim(in_value, *in_deriv)) &&
+               memo == NULL);
+  
+  OpgruNonlinearityComponent *to_update =
+      dynamic_cast<OpgruNonlinearityComponent*>(to_update_in);
+  KALDI_ASSERT(in_deriv != NULL || to_update != NULL);
+  int32 num_rows = in_value.NumRows();
+  // the input values
+  CuSubMatrix<BaseFloat> z_t(in_value, 0, num_rows, 0, cell_dim_),
+      o_t(in_value, 0, num_rows, cell_dim_, cell_dim_),
+      hpart_t(in_value, 0, num_rows, 2 * cell_dim_, cell_dim_),
+      c_t1(in_value, 0, num_rows, 3 * cell_dim_, cell_dim_);
+  
+  // The purpose of this 'in_deriv_ptr' is so that we can create submatrices
+  // like z_t_deriv without the code crashing.  If in_deriv is NULL these point
+  // to 'in_value', and we'll be careful never to actually write to these
+  // sub-matrices, which aside from being conceptually wrong would violate the
+  // const semantics of this function.
+  const CuMatrixBase<BaseFloat> *in_deriv_ptr =
+      (in_deriv == NULL ? &in_value : in_deriv);
+  CuSubMatrix<BaseFloat> z_t_deriv(*in_deriv_ptr, 0, num_rows, 0, cell_dim_),
+      o_t_deriv(*in_deriv_ptr, 0, num_rows, cell_dim_, cell_dim_),
+      hpart_t_deriv(*in_deriv_ptr, 0, num_rows, 2 * cell_dim_, cell_dim_),
+      c_t1_deriv(*in_deriv_ptr, 0, num_rows, 3 * cell_dim_, cell_dim_);
+  
+  // Note: the output h_t is never actually used in the OPGRU computation (we only
+  // output it because we want the value to be cached to save computation in the
+  // backprop), so we expect that the 'h_t_deriv', if we extracted it in the
+  // obvious way, would be all zeros.
+  // We create a different, local h_t_deriv
+  // variable that backpropagates the derivative from c_t_deriv.
+  CuSubMatrix<BaseFloat> h_t(out_value, 0, num_rows, 0, cell_dim_),
+      c_t(out_value, 0, num_rows, cell_dim_, cell_dim_),
+      m_t(out_value, 0, num_rows, 2 * cell_dim_, cell_dim_),
+      c_t_deriv(out_deriv, 0, num_rows, cell_dim_, cell_dim_),
+      m_t_deriv(out_deriv, 0, num_rows, 2 * cell_dim_, cell_dim_);
+  CuMatrix<BaseFloat> h_t_deriv(num_rows, cell_dim_, kUndefined);
+
+  { // we initialize h_t_deriv with the derivative from 'out_deriv'.
+    // In real life in a OPGRU, this would always be zero; but in testing
+    // code it may be nonzero and we include this term so that
+    // the tests don't fail.  Note: if you were to remove these
+    // lines, you'd have to change 'h_t_deriv.AddMat(1.0, c_t_deriv);' below
+    // to a CopyFromMat() call.
+    CuSubMatrix<BaseFloat> h_t_deriv_in(out_deriv, 0, num_rows, 0, cell_dim_);
+    h_t_deriv.CopyFromMat(h_t_deriv_in);
+  }
+
+  { // This block does the backprop corresponding to the
+    // forward-pass expression: m_t = c_t \dot o_t
+    if (in_deriv) {
+      o_t_deriv.AddMatMatElements(1.0, m_t_deriv, c_t, 1.0);
+      c_t_deriv.AddMatMatElements(1.0, m_t_deriv, o_t, 1.0);
+    }
+  }
+
+  { // This block does the backprop corresponding to the
+    // forward-pass expression: c_t = (1 - z_t) \dot h_t + z_t \dot c_{t-1}
+    h_t_deriv.AddMat(1.0, c_t_deriv);
+    h_t_deriv.AddMatMatElements(-1.0, c_t_deriv, z_t, 1.0);
+    if (in_deriv) {
+      z_t_deriv.AddMatMatElements(-1.0, c_t_deriv, h_t, 1.0);
+      z_t_deriv.AddMatMatElements(1.0, c_t_deriv, c_t1, 1.0);
+      c_t1_deriv.AddMatMatElements(1.0, c_t_deriv, z_t, 1.0);
+    }
+  }
+
+  
+  { // This block does the backprop corresponding to the
+    // forward-pass expression: h_t = \tanh( hpart_t + w_{hc} c_{t-1} ) 
+    // firstly, do backprop to tanh
+    h_t_deriv.DiffTanh(h_t, h_t_deriv);
+
+    // to do the backprop corresponding to the
+    // forward-pass expression: h_t = hpart_t + w_{hc} c_{t-1} 
+    // note: tanh has been processed before
+    if (to_update) {
+      to_update->TanhStatsAndSelfRepair(h_t, &h_t_deriv);
+      to_update->UpdateParameters(c_t1, h_t_deriv);
+    }
+    if (in_deriv) {
+      hpart_t_deriv.AddMat(1.0, h_t_deriv);
+      c_t1_deriv.AddMatMat(1.0, h_t_deriv, kNoTrans, w_hc_, kNoTrans, 0.0);
+    }
+  }
+}
+
+void OpgruNonlinearityComponent::TanhStatsAndSelfRepair(
+                      const CuMatrixBase<BaseFloat> &h_t,
+                      CuMatrixBase<BaseFloat> *h_t_deriv) {
+  KALDI_ASSERT(SameDim(h_t, *h_t_deriv));
+
+  // we use this probability (hardcoded for now) to limit the stats accumulation
+  // and self-repair code to running on about half of the minibatches.
+  BaseFloat repair_and_stats_probability = 0.5;
+  if (RandUniform() > repair_and_stats_probability)
+    return;
+
+  // OK, accumulate stats.
+  // For the next few lines, compare with TanhComponent::StoreStats(), which is where
+  // we got this code.
+  // tanh_deriv is the function derivative of the tanh function,
+  // tanh'(x) = 1.0 - tanh(x)^2.  h_t corresponds to tanh(x).
+  CuMatrix<BaseFloat> tanh_deriv(h_t);
+  tanh_deriv.ApplyPow(2.0);
+  tanh_deriv.Scale(-1.0);
+  tanh_deriv.Add(1.0);
+
+  count_ += h_t.NumRows();
+  CuVector<BaseFloat> temp(cell_dim_);
+  temp.AddRowSumMat(1.0, h_t, 0.0);
+  value_sum_.AddVec(1.0, temp);
+  temp.AddRowSumMat(1.0, tanh_deriv, 0.0);
+  deriv_sum_.AddVec(1.0, temp);
+
+  if (count_ <= 0.0) {
+    // this would be rather pathological if it happened.
+    return;
+  }
+
+  // The rest of this function contains code modified from
+  // TanhComponent::RepairGradients().
+  // thresholds_vec is actually a 1-row matrix.  
+  // (the ApplyHeaviside function isn't defined for vectors).
+  CuMatrix<BaseFloat> thresholds(1, cell_dim_);
+  CuSubVector<BaseFloat> thresholds_vec(thresholds, 0);
+  thresholds_vec.AddVec(-1.0, deriv_sum_);
+  thresholds_vec.Add(self_repair_threshold_ * count_);
+  thresholds.ApplyHeaviside();
+  self_repair_total_ += thresholds_vec.Sum();
+
+  // there is a comment explaining what we are doing with
+  // 'thresholds_vec', at this point in TanhComponent::RepairGradients().
+  // We won't repeat it here.
+
+  h_t_deriv->AddMatDiagVec(-self_repair_scale_ / repair_and_stats_probability,
+                           h_t, kNoTrans, thresholds_vec);
+}
+
+
+void OpgruNonlinearityComponent::UpdateParameters(
+    const CuMatrixBase<BaseFloat> &c_t1,
+    const CuMatrixBase<BaseFloat> &h_t_deriv) {
+  if (is_gradient_) {
+    // 'simple' update, no natural gradient.  Compare
+    // with AffineComponent::UpdateSimple().
+    w_hc_.AddMatMat(learning_rate_, h_t_deriv, kTrans,
+                   c_t1, kNoTrans, 1.0);
+  } else {
+    // the natural-gradient update.
+    CuMatrix<BaseFloat> in_value_temp(c_t1),
+        out_deriv_temp(h_t_deriv);
+
+    // These "scale" values get will get multiplied into the learning rate.
+    BaseFloat in_scale, out_scale;
+
+    preconditioner_in_.PreconditionDirections(&in_value_temp, NULL,
+                                              &in_scale);
+    preconditioner_out_.PreconditionDirections(&out_deriv_temp, NULL,
+                                               &out_scale);
+
+    BaseFloat local_lrate = learning_rate_ * in_scale * out_scale;
+    w_hc_.AddMatMat(local_lrate, out_deriv_temp, kTrans,
+                   in_value_temp, kNoTrans, 1.0);
+  }
+}
+
+
+OpgruNonlinearityComponent::OpgruNonlinearityComponent(
+            const OpgruNonlinearityComponent &other):
+            UpdatableComponent(other),
+            cell_dim_(other.cell_dim_),
+            w_hc_(other.w_hc_),
+            value_sum_(other.value_sum_),
+            deriv_sum_(other.deriv_sum_),
+            self_repair_total_(other.self_repair_total_),
+            count_(other.count_),
+            self_repair_threshold_(other.self_repair_threshold_),
+            self_repair_scale_(other.self_repair_scale_),
+            preconditioner_in_(other.preconditioner_in_),
+            preconditioner_out_(other.preconditioner_out_) {
+  Check();
+}
+
+void OpgruNonlinearityComponent::InitFromConfig(ConfigLine *cfl) {
+  cell_dim_ = -1;
+  self_repair_threshold_ = 0.2;
+  self_repair_scale_ = 1.0e-05;
+
+  InitLearningRatesFromConfig(cfl);
+  if (!cfl->GetValue("cell-dim", &cell_dim_) || cell_dim_ <= 0)
+    KALDI_ERR << "cell-dim > 0 is required for OpgruNonlinearityComponent.";
+
+  BaseFloat param_stddev = 1.0 / std::sqrt(cell_dim_),
+            alpha = 4.0;
+  int32 rank_in = 20,
+        rank_out = 80,
+        update_period = 4;
+
+  cfl->GetValue("self-repair-threshold", &self_repair_threshold_);
+  cfl->GetValue("self-repair-scale", &self_repair_scale_);
+  cfl->GetValue("param-stddev", &param_stddev);
+  cfl->GetValue("alpha", &alpha);
+  cfl->GetValue("rank-in", &rank_in);
+  cfl->GetValue("rank-out", &rank_out);
+  cfl->GetValue("update-period", &update_period);
+
+  w_hc_.Resize(cell_dim_, cell_dim_);
+  w_hc_.SetRandn();
+  w_hc_.Scale(param_stddev);
+
+  preconditioner_in_.SetAlpha(alpha);
+  preconditioner_in_.SetRank(rank_in);
+  preconditioner_in_.SetUpdatePeriod(update_period);
+  preconditioner_out_.SetAlpha(alpha);
+  preconditioner_out_.SetRank(rank_out);
+  preconditioner_out_.SetUpdatePeriod(update_period);
+
+  count_ = 0.0;
+  self_repair_total_ = 0.0;
+  value_sum_.Resize(cell_dim_);
+  deriv_sum_.Resize(cell_dim_);
+
+  Check();
 }
 
 
