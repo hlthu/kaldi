@@ -6197,9 +6197,9 @@ void GruNonlinearityComponent::UpdateParameters(
     // These "scale" values get will get multiplied into the learning rate.
     BaseFloat in_scale, out_scale;
 
-    preconditioner_in_.PreconditionDirections(&in_value_temp, NULL,
+    preconditioner_in_.PreconditionDirections(&in_value_temp,
                                               &in_scale);
-    preconditioner_out_.PreconditionDirections(&out_deriv_temp, NULL,
+    preconditioner_out_.PreconditionDirections(&out_deriv_temp,
                                                &out_scale);
 
     BaseFloat local_lrate = learning_rate_ * in_scale * out_scale;
