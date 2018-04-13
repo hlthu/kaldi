@@ -748,18 +748,11 @@ class XconfigOpgruLayer(XconfigLayerBase):
         # formulation for OPGRU like:
         # z_t = \sigmoid ( x_t * U^z + s_{t-1} * W^z ) // update gate
         # o_t = \sigmoid ( x_t * U^o + s_{t-1} * W^o ) // output gate
-<<<<<<< HEAD
-        # h_t = \tanh ( x_t * U^h + y_{t-1} \dot W^h ) // W^h is learnable vector
-        # y_t = ( 1 - z_t ) \dot h_t + z_t \dot y_{t-1}
-        # y_o_t = y_t \dot o_t
-        # sn_t = y_o_t * W^y
-        # s_t = sn_t(0:rec_proj_dim-1)
-=======
         # \tilde{h}_t = \tanh ( x_t * U^h + h_{t-1} \dot W^h ) // W^h is learnable vector
         # h_t = ( 1 - z_t ) \dot \tilde{h}_t + z_t \dot h_{t-1}
         # y_t = (y_t \dot o_t) * W^y
         # s_t = y_t(0:rec_proj_dim-1)
->>>>>>> upstream/master
+
         
         configs = []
         configs.append("# Update gate control : W_z* matrics")
@@ -973,15 +966,9 @@ class XconfigNormOpgruLayer(XconfigLayerBase):
         # formulation for OPGRU like:
         # z_t = \sigmoid ( x_t * U^z + s_{t-1} * W^z ) // update gate
         # o_t = \sigmoid ( x_t * U^o + s_{t-1} * W^o ) // output gate
-<<<<<<< HEAD
-        # h_t = \tanh ( x_t * U^h + y_{t-1} \dot W^h ) // W^h is learnable vector
-        # y_t = ( 1 - z_t ) \dot h_t + z_t \dot y_{t-1}
-        # y_t_tmp = ( y_t \dot o_t) * W^y
-=======
         # \tilde{h}_t = \tanh ( x_t * U^h + h_{t-1} \dot W^h ) // W^h is learnable vector
         # h_t = ( 1 - z_t ) \dot \tilde{h}_t + z_t \dot h_{t-1}
         # y_t_tmp = ( h_t \dot o_t) * W^y
->>>>>>> upstream/master
         # s_t = renorm ( y_t_tmp(0:rec_proj_dim-1) )
         # y_t = batchnorm ( y_t_tmp )
         
@@ -1056,7 +1043,6 @@ class XconfigNormOpgruLayer(XconfigLayerBase):
         configs.append("component-node name={0}.s_t component={0}.s_r input={0}.s_t_preclip_renorm".format(name))
 
         return configs
-<<<<<<< HEAD
 
 # This class is for lines like
 #   'fast-gru-layer name=gru1 input=[-1] delay=-3'
@@ -1398,6 +1384,3 @@ class XconfigFastPgruLayer(XconfigLayerBase):
         configs.append("dim-range-node name={0}.s_t_pre input-node={0}.y_t dim-offset=0 dim={1}".format(name, rec_proj_dim))
         configs.append("component-node name={0}.s_t component={0}.s_r input={0}.s_t_pre".format(name))
         return configs
-
-=======
->>>>>>> upstream/master
