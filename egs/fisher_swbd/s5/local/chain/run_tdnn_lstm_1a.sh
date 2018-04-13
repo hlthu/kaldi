@@ -1,7 +1,13 @@
 #!/bin/bash
-# same as run_tdnn_opgru_1a.sh, but replacing Norm-OPGRU with LSTMP.
+# Copyright 2017 University of Chinese Academy of Sciences (UCAS) Gaofeng Cheng
+# Apache 2.0
+
+# Same as run_tdnn_opgru_1a.sh, but replacing Norm-OPGRU with LSTMP.
+# Also Batchnorm in TDNN layers does not reduce the WER in Fisher+SWBD, so in run_tdnn_lstm_1a.sh,
+# I just apply renorm component in TDNN layers.
 # ./local/chain/compare_wer_general.sh --looped tdnn_lstm_1a_sp
 # System                tdnn_lstm_1a_sp
+# num-params                 39.7M
 # WER on eval2000(tg)        12.3
 #           [looped:]        12.2
 # WER on eval2000(fg)        12.1
@@ -15,7 +21,12 @@
 # Final train prob (xent)        -0.882
 # Final valid prob (xent)       -0.9393
 
-# ./show_chain_wer.sh tdnn_lstm_1b_sp
+# ./steps/info/chain_dir_info.pl exp/chain/tdnn_lstm_1a_sp
+#exp/chain/tdnn_lstm_1a_sp: num-iters=2384 nj=3..16 num-params=39.7M dim=40+100->6149 combine=-0.097->-0.086 
+#xent:train/valid[1587,2383,final]=(-0.949,-0.898,-0.882/-0.998,-0.949,-0.939) 
+#logprob:train/valid[1587,2383,final]=(-0.079,-0.075,-0.074/-0.087,-0.082,-0.084)
+
+# ./show_chain_wer.sh tdnn_lstm_1a_sp
 # %WER 16.0 | 2628 21594 | 86.3 9.0 4.7 2.3 16.0 54.4 | exp/chain/tdnn_lstm_1a_sp/decode_eval2000_fsh_sw1_tg/score_7_0.0/eval2000_hires.ctm.callhm.filt.sys
 # %WER 12.3 | 4459 42989 | 89.4 7.1 3.5 1.7 12.3 49.8 | exp/chain/tdnn_lstm_1a_sp/decode_eval2000_fsh_sw1_tg/score_8_0.0/eval2000_hires.ctm.filt.sys
 # %WER 8.4 | 1831 21395 | 92.7 5.1 2.2 1.1 8.4 42.3 | exp/chain/tdnn_lstm_1a_sp/decode_eval2000_fsh_sw1_tg/score_10_0.0/eval2000_hires.ctm.swbd.filt.sys
@@ -23,7 +34,7 @@
 # %WER 12.1 | 4459 42989 | 89.6 6.9 3.5 1.7 12.1 49.2 | exp/chain/tdnn_lstm_1a_sp/decode_eval2000_fsh_sw1_fg/score_8_0.0/eval2000_hires.ctm.filt.sys
 # %WER 8.2 | 1831 21395 | 93.1 5.1 1.8 1.3 8.2 41.7 | exp/chain/tdnn_lstm_1a_sp/decode_eval2000_fsh_sw1_fg/score_8_0.0/eval2000_hires.ctm.swbd.filt.sys
 
-# ./show_chain_wer_rt03.sh tdnn_lstm_1b_sp
+# ./show_chain_wer_rt03.sh tdnn_lstm_1a_sp
 # %WER 9.6 | 3970 36721 | 91.5 5.5 3.0 1.1 9.6 41.2 | exp/chain/tdnn_lstm_1a_sp/decode_rt03_fsh_sw1_tg/score_7_0.0/rt03_hires.ctm.fsh.filt.sys
 # %WER 11.6 | 8420 76157 | 89.7 6.8 3.4 1.4 11.6 43.0 | exp/chain/tdnn_lstm_1a_sp/decode_rt03_fsh_sw1_tg/score_7_0.0/rt03_hires.ctm.filt.sys
 # %WER 13.3 | 4450 39436 | 88.0 7.4 4.6 1.3 13.3 44.5 | exp/chain/tdnn_lstm_1a_sp/decode_rt03_fsh_sw1_tg/score_9_0.0/rt03_hires.ctm.swbd.filt.sys
@@ -227,6 +238,7 @@ fi
 decode_suff=fsh_sw1_tg
 graph_dir=$dir/graph_fsh_sw1_tg
 if [ $stage -le 15 ]; then
+  rm $dir/.error 2>/dev/null || true
   [ -z $extra_left_context ] && extra_left_context=$chunk_left_context;
   [ -z $extra_right_context ] && extra_right_context=$chunk_right_context;
   [ -z $frames_per_chunk ] && frames_per_chunk=$chunk_width;
@@ -245,13 +257,16 @@ if [ $stage -le 15 ]; then
           --online-ivector-dir exp/nnet3/ivectors_${decode_set} \
          $graph_dir data/${decode_set}_hires \
          $dir/decode_${decode_set}${decode_dir_affix:+_$decode_dir_affix}_${decode_suff} || exit 1;
-      if $has_fisher; then
-          steps/lmrescore_const_arpa.sh --cmd "$decode_cmd" \
+      steps/lmrescore_const_arpa.sh --cmd "$decode_cmd" \
             data/lang_fsh_sw1_{tg,fg} data/${decode_set}_hires \
             $dir/decode_${decode_set}${decode_dir_affix:+_$decode_dir_affix}_fsh_sw1_{tg,fg} || exit 1;
-      fi
-      ) &
+      ) || touch $dir/.error &
   done
+  wait
+  if [ -f $dir/.error ]; then
+    echo "$0: something went wrong in decoding"
+    exit 1
+  fi
 fi
 
 test_online_decoding=true
@@ -273,11 +288,9 @@ if $test_online_decoding && [ $stage -le 16 ]; then
           --acwt 1.0 --post-decode-acwt 10.0 \
          $graph_dir data/${decode_set}_hires \
          ${dir}_online/decode_${decode_set}${decode_iter:+_$decode_iter}_${decode_suff} || exit 1;
-      if $has_fisher; then
-	      steps/lmrescore_const_arpa.sh --cmd "$decode_cmd" \
+	    steps/lmrescore_const_arpa.sh --cmd "$decode_cmd" \
 		      data/lang_fsh_sw1_{tg,fg} data/${decode_set}_hires \
 		      ${dir}_online/decode_${decode_set}${decode_dir_affix:+_$decode_dir_affix}_fsh_sw1_{tg,fg} || exit 1;
-      fi
     ) || touch $dir/.error &
   done
   wait
