@@ -34,9 +34,12 @@ config_to_layer = {
         'affine-layer' : xlayers.XconfigAffineLayer,
         'lstm-layer' : xlayers.XconfigLstmLayer,
         'lstmp-layer' : xlayers.XconfigLstmpLayer,
+        'lstmp-batchnorm-layer' : xlayers.XconfigLstmpLayer,
         'fast-lstm-layer' : xlayers.XconfigFastLstmLayer,
+        'fast-lstm-batchnorm-layer' : xlayers.XconfigFastLstmLayer,
         'fast-lstmp-layer' : xlayers.XconfigFastLstmpLayer,
-        'fast-lstmb-layer' : xlayers.XconfigFastLstmbLayer,
+        'fast-lstmp-batchnorm-layer' : xlayers.XconfigFastLstmpLayer,
+        'lstmb-layer' : xlayers.XconfigLstmbLayer,
         'stats-layer': xlayers.XconfigStatsLayer,
         'relu-conv-layer': xlayers.XconfigConvLayer,
         'conv-layer': xlayers.XconfigConvLayer,
@@ -65,7 +68,16 @@ config_to_layer = {
         'opgru-layer' : xlayers.XconfigOpgruLayer,
         'norm-pgru-layer' : xlayers.XconfigNormPgruLayer,
         'norm-opgru-layer' : xlayers.XconfigNormOpgruLayer,
+<<<<<<< HEAD
         'renorm-component': xlayers.XconfigRenormComponent
+=======
+        'fast-gru-layer': xlayers.XconfigFastGruLayer,
+        'fast-pgru-layer': xlayers.XconfigFastPgruLayer,
+        'renorm-component': xlayers.XconfigRenormComponent,
+        'batchnorm-component': xlayers.XconfigBatchnormComponent,
+        'no-op-component': xlayers.XconfigNoOpComponent,
+        'linear-component': xlayers.XconfigLinearComponent
+>>>>>>> 5a8992e1268c8f81e5926f6511175d65a746eb20
 }
 
 # Turn a config line and a list of previous layers into
