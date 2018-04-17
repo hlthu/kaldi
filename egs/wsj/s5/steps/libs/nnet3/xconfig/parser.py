@@ -68,16 +68,12 @@ config_to_layer = {
         'opgru-layer' : xlayers.XconfigOpgruLayer,
         'norm-pgru-layer' : xlayers.XconfigNormPgruLayer,
         'norm-opgru-layer' : xlayers.XconfigNormOpgruLayer,
-<<<<<<< HEAD
-        'renorm-component': xlayers.XconfigRenormComponent
-=======
-        'fast-gru-layer': xlayers.XconfigFastGruLayer,
-        'fast-pgru-layer': xlayers.XconfigFastPgruLayer,
         'renorm-component': xlayers.XconfigRenormComponent,
         'batchnorm-component': xlayers.XconfigBatchnormComponent,
         'no-op-component': xlayers.XconfigNoOpComponent,
-        'linear-component': xlayers.XconfigLinearComponent
->>>>>>> 5a8992e1268c8f81e5926f6511175d65a746eb20
+        'linear-component': xlayers.XconfigLinewarComponent,
+		'vfsmn-layer': xlayers.XconfigvFSMNLayer,
+		'cfsmn-layer': xlayers.XconfigcFSMNLayer
 }
 
 # Turn a config line and a list of previous layers into
