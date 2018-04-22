@@ -9,13 +9,13 @@ SUBDIRS = base matrix util feat tree gmm transform \
           fstext hmm lm decoder lat kws cudamatrix nnet \
           bin fstbin gmmbin fgmmbin featbin \
           nnetbin latbin sgmm2 sgmm2bin nnet2 nnet3 rnnlm chain nnet3bin nnet2bin kwsbin \
-          ivector ivectorbin online2 online2bin lmbin chainbin rnnlmbin
+          ivector ivectorbin online2 online2bin online onlinebin lmbin chainbin rnnlmbin
 
 MEMTESTDIRS = base matrix util feat tree gmm transform \
           fstext hmm lm decoder lat nnet kws chain \
           bin fstbin gmmbin fgmmbin featbin \
           nnetbin latbin sgmm2 nnet2 nnet3 rnnlm nnet2bin nnet3bin sgmm2bin kwsbin \
-          ivector ivectorbin online2 online2bin lmbin
+          ivector ivectorbin online2 online2bin online onlinebin lmbin
 
 CUDAMEMTESTDIR = cudamatrix
 
