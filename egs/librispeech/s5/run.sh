@@ -353,7 +353,7 @@ local/run_cleanup_segmentation.sh
 
 
 # train nnet3 tdnn models on the entire data with data-cleaning (xent and chain)
-local/chain/run_tdnn.sh # set "--stage 11" if you have already run local/nnet3/run_tdnn.sh
+#local/chain/run_tdnn.sh # set "--stage 11" if you have already run local/nnet3/run_tdnn.sh
 
 # The nnet3 TDNN recipe:
 # local/nnet3/run_tdnn.sh # set "--stage 11" if you have already run local/chain/run_tdnn.sh
@@ -371,6 +371,17 @@ local/chain/run_tdnn.sh # set "--stage 11" if you have already run local/nnet3/r
 # ## The following is an older version of the online-nnet2 recipe, without "multi-splice".  It's faster
 # ## to train but slightly worse.
 # # local/online/run_nnet2.sh
+
+
+# ## Traing FSMN models on the cleaned-up data
+# ## Three configurations of DFSMN with different model size (S--small; M--medium; L--large)
+# ## with/without online ivector
+local/nnet/run_fsmn.sh DFSMN_S
+# local/nnet/run_fsmn.sh DFSMN_M
+# local/nnet/run_fsmn.sh DFSMN_L
+# local/nnet/run_fsmn_ivector.sh DFSMN_S_ivector
+# local/nnet/run_fsmn_ivector.sh DFSMN_M_ivector
+# local/nnet/run_fsmn_ivector.sh DFSMN_L_ivector
 
 # Wait for decodings in the background
 wait
