@@ -18,6 +18,7 @@
 // limitations under the License.
 
 #include "tree/tree-renderer.h"
+#include "tree/context-dep.h"
 
 void MakeEvent(std::string &qry, fst::SymbolTable *phone_syms,
                kaldi::EventType **query)
@@ -39,7 +40,7 @@ void MakeEvent(std::string &qry, fst::SymbolTable *phone_syms,
     }
     else {
       value = static_cast<EventValueType>(phone_syms->Find(valstr.c_str()));
-      if (value == fst::SymbolTable::kNoSymbol) {
+      if (value == -1) { // fst::kNoSymbol
         KALDI_ERR << "Bad query: invalid symbol ("
                   << valstr << ')' << std::endl << std::endl;
       }
@@ -49,7 +50,7 @@ void MakeEvent(std::string &qry, fst::SymbolTable *phone_syms,
   }
   std::string valstr = qry.substr(old_found);
   EventValueType value = static_cast<EventValueType>(phone_syms->Find(valstr.c_str()));
-  if (value == fst::SymbolTable::kNoSymbol) {
+  if (value == -1) { // fst::kNoSymbol
     KALDI_ERR << "Bad query: invalid symbol ("
               << valstr << ')' << std::endl << std::endl;
   }
@@ -69,7 +70,7 @@ int main(int argc, char **argv) {
         "Outputs a decision tree description in GraphViz format\n"
         "Usage: draw-tree [options] <phone-symbols> <tree>\n"
         "e.g.: draw-tree phones.txt tree | dot -Gsize=8,10.5 -Tps | ps2pdf - tree.pdf\n";
-    
+
     ParseOptions po(usage);
     po.Register("query", &qry,
                 "a query to trace through the tree"
