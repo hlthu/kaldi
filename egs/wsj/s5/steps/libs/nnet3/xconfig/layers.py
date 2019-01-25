@@ -11,3 +11,4 @@ from .gru import *
 from .fsmn import *
 from .stats_layer import *
 from .trivial_layers import *
+from .composite_layers import *
